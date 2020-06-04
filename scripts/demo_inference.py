@@ -4,6 +4,7 @@ import os
 import platform
 import sys
 import time
+import glob
 
 import numpy as np
 import torch
@@ -18,12 +19,14 @@ from alphapose.utils.transforms import flip, flip_heatmap
 from alphapose.utils.vis import getTime
 from alphapose.utils.webcam_detector import WebCamDetectionLoader
 from alphapose.utils.writer import DataWriter
+import matplotlib.pyplot as plt
+
 
 """----------------------------- Demo options -----------------------------"""
 parser = argparse.ArgumentParser(description='AlphaPose Demo')
-parser.add_argument('--cfg', type=str, required=True,
+parser.add_argument('--cfg', type=str, default='../configs/coco/resnet/256x192_res152_lr1e-3_1x-duc.yaml',
                     help='experiment configure file name')
-parser.add_argument('--checkpoint', type=str, required=True,
+parser.add_argument('--checkpoint', type=str, default='../pretrained_models/fast_421_res152_256x192.pth',
                     help='checkpoint file name')
 parser.add_argument('--sp', default=False, action='store_true',
                     help='Use single process for pytorch')
@@ -38,7 +41,7 @@ parser.add_argument('--list', dest='inputlist',
 parser.add_argument('--image', dest='inputimg',
                     help='image-name', default="")
 parser.add_argument('--outdir', dest='outputpath',
-                    help='output-directory', default="examples/res/")
+                    help='output-directory', default="")
 parser.add_argument('--save_img', default=False, action='store_true',
                     help='save result as image')
 parser.add_argument('--vis', default=False, action='store_true',
@@ -51,9 +54,9 @@ parser.add_argument('--format', type=str,
                     help='save in the format of cmu or coco or openpose, option: coco/cmu/open')
 parser.add_argument('--min_box_area', type=int, default=0,
                     help='min box area to filter out')
-parser.add_argument('--detbatch', type=int, default=5,
+parser.add_argument('--detbatch', type=int, default=10,
                     help='detection batch size PER GPU')
-parser.add_argument('--posebatch', type=int, default=80,
+parser.add_argument('--posebatch', type=int, default=160,
                     help='pose estimation maximum batch size PER GPU')
 parser.add_argument('--eval', dest='eval', default=False, action='store_true',
                     help='save the result json as coco format, using image index(int) instead of image name(str)')
@@ -76,6 +79,12 @@ parser.add_argument('--vis_fast', dest='vis_fast',
                     help='use fast rendering', action='store_true', default=False)
 parser.add_argument('--pose_track', dest='pose_track',
                     help='track humans in video', action='store_true', default=False)
+                
+parser.add_argument('--vis_keypoints', dest='visualise_keypoints',
+                    help='If keypoints are to be visualised', action='store_true', default=False)
+parser.add_argument('--skip_on', dest='skip_true',
+                    help='If images are to be skipped', type=int, default=0)
+
 
 args = parser.parse_args()
 cfg = update_config(args.cfg)
@@ -122,13 +131,22 @@ def check_input():
         inputlist = args.inputlist
         inputimg = args.inputimg
 
+        if not os.path.isdir(inputpath): #check for the valid directory
+            print('INVALID DIRECTORY')
+            exit()
+
         if len(inputlist):
             im_names = open(inputlist, 'r').readlines()
         elif len(inputpath) and inputpath != '/':
-            for root, dirs, files in os.walk(inputpath):
-                im_names = files
+            im_names = glob.glob(inputpath + '*.jpg')
         elif len(inputimg):
             im_names = [inputimg]
+
+        im_names = [im_name.split('/')[-1] for im_name in im_names]
+        im_names = sorted(im_names)
+        
+        if args.skip_true:
+            im_names = [im_names[k] for k in range(len(im_names)) if k%args.skip_true == 0]
 
         return 'image', im_names
 
@@ -282,6 +300,34 @@ if __name__ == "__main__":
             writer.commit()
             writer.clear_queues()
             # det_loader.clear_queues()
+
     final_result = writer.results()
+
+    if args.visualise_keypoints:
+        vis_path = args.inputpath + 'Keypoints_Vis/'
+        if not os.path.exists(vis_path):
+            os.mkdir(vis_path)
+        
+        for result in final_result:
+            if not len(result['result']) > 0 :
+                break
+
+            img = result['imgname']
+            img_path = args.inputpath + img
+
+            im = plt.imread(img_path)
+            implot = plt.imshow(im)
+            keypoints = result['result'][0]['keypoints'].tolist()
+            kx = [k[0] for k in keypoints]
+            ky = [k[1] for k in keypoints]
+            plt.scatter(kx, ky)
+            plt.savefig(vis_path + img)
+            plt.close()
+
     write_json(final_result, args.outputpath, form=args.format, for_eval=args.eval)
+    # print(final_result[0]['result'][0]['keypoints'])
+    # print(final_result[1]['result'])
+    # print(final_result[1]['imgname'])
+
+
     print("Results have been written to json.")
